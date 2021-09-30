@@ -1,0 +1,189 @@
+#!/usr/bin/python3
+import os
+import re
+import socket
+import ssl
+import sys
+from urllib.parse import urlparse
+
+
+# Gracefully close the control connection by sending a quit message
+def quit_control_connection(s):
+    send_to_remote("QUIT\r\n", s)
+    print_message(s.recv())
+
+
+# Send mkd command to remote server
+def mkd(dr, s):
+    send_to_remote(f"MKD {dr}\r\n", s)
+    print_message(s.recv())
+
+
+# Send rmd command to remove server
+def rmd(dr, s):
+    send_to_remote(f"RMD {dr}\r\n", s)
+    print(s.recv(8000))
+
+
+# Send ls command to remote server, open data socket and receive output
+def ls(dr, s, host):
+    data_s = initialize_data_connection(f"LIST {dr}\r\n", s, host)
+    print(data_s.recv(8000).decode("ascii"))
+    data_s.close()
+
+
+# Delete a file from the remote server OR locally, depending on the file path
+def dele(full_url, dr, s):
+    # Delete remote file
+    if is_ftps_url(full_url):
+        send_to_remote(f"DELE {dr}\r\n", s)
+        print_message(s.recv())
+    # Delete local file
+    else:
+        os.remove(full_url)
+
+
+# Send STOR command to remote server, open data connection, send file from local disk
+def stor(local_dr, remote_dr, s, host):
+    data_s = initialize_data_connection(f"STOR {remote_dr}\r\n", s, host)
+    file = open(local_dr, "rb")
+    file_contents = file.read()
+    data_s.send(file_contents)
+    data_s.close()
+    file.close()
+    print_message(s.recv())
+
+
+# Send RETR command to remote server, open data connection, receive file and write to disk
+def retr(local_dr, remote_dr, s, host):
+    data_s = initialize_data_connection(f"RETR {remote_dr}\r\n", s, host)
+    file = open(local_dr, "wb")
+    contents = data_s.recv()
+    file.write(contents)
+    file.close()
+
+
+# Copy file from local->remote or remote->local depending on the request
+def copy(arg1, arg2, remote_dir, s, host):
+    if is_ftps_url(arg1):
+        retr(arg2, remote_dir, s, host)
+    elif is_ftps_url(arg2):
+        stor(arg1, remote_dir, s, host)
+
+
+# Check if a given string is an FTPS url
+def is_ftps_url(arg1):
+    return "ftps://" in arg1
+
+
+# Parse an FTPS url into a dictionary of components
+def parse_ftps_url(given_url):
+    url = urlparse(given_url, scheme="ftp")
+    parsed_url = {}
+    if url.hostname is None:
+        raise RuntimeError("Please provide a hostname")
+    parsed_url["hostname"] = url.hostname
+    parsed_url["port"] = check_if_none(url.port, 21)
+    parsed_url["username"] = check_if_none(url.username, "anonymous")
+    parsed_url["password"] = check_if_none(url.password, "")
+    parsed_url["path"] = check_if_none(url.path, "/")
+    return parsed_url
+
+
+# Check if a value is none - if it is, provide a default
+def check_if_none(value, default):
+    if value is None:
+        return default
+    else:
+        return value
+
+
+# Send a message through the socket, s
+def send_to_remote(message, s):
+    s.send(bytes(message, "ascii"))
+
+
+# Initialize a control connection and return an open socket
+def initialize_control_connection(host, p, usr, pswd):
+    s = socket.create_connection((host, p))
+    print_message(s.recv(8000))
+    send_to_remote(f"AUTH TLS\r\n", s)
+    print_message(s.recv(8000))
+    context = ssl.create_default_context()
+    s = context.wrap_socket(s, server_hostname=host)
+    cmds = [f"USER {usr}\r\n", f"PASS {pswd}\r\n", "PBSZ 0\r\n", "PROT P\r\n", "TYPE I\r\n", "MODE S\r\n",
+            "STRU F\r\n"]
+    for cmd in cmds:
+        send_to_remote(cmd, s)
+        print_message(s.recv())
+    return s
+
+
+# Extract connection details from an "Entering Passive Mode" message
+def extract_connection_details(m):
+    message = m.decode("ascii")
+    if parsed_input["verbose"]:
+        print(message)
+    match = re.match(r'.*\((\d+),(\d+),(\d+),(\d+),(\d+),(\d+)\)', message)
+    ip = f"{match.group(1)}.{match.group(2)}.{match.group(3)}.{match.group(4)}"
+    p = (int(match.group(5)) * 256) + int(match.group(6))
+    print(f"Established Data Connection to {ip}:{port}")
+    return ip, p
+
+
+# Initialize a secure data connection and return an open socket
+def initialize_data_connection(cmd, s, host):
+    send_to_remote("PASV\r\n", s)
+    connection = extract_connection_details(s.recv(8000))
+    send_to_remote(cmd, s)
+    data_socket = socket.create_connection((connection[0], connection[1]))
+    context = ssl.create_default_context()
+    secure_data_socket = context.wrap_socket(data_socket, server_hostname=host)
+    print_message(s.recv())
+    return secure_data_socket
+
+
+def print_message(msg):
+    if parsed_input["verbose"]:
+        print(msg.decode("ascii").replace("\n", ""))
+
+
+# Process the input args
+def process_input(arr):
+    if is_ftps_url(arr[2]):
+        input_dict = parse_ftps_url(arr[2])
+    elif is_ftps_url(arr[3]):
+        input_dict = parse_ftps_url(arr[3])
+    else:
+        raise RuntimeError("No arg provided that starts with ftps://")
+    input_dict["command"] = arr[1]
+    input_dict["verbose"] = "-v" in arr
+    return input_dict
+
+
+parsed_input = process_input(sys.argv)
+command = parsed_input["command"]
+hostname = parsed_input["hostname"]
+port = parsed_input["port"]
+username = parsed_input["username"]
+password = parsed_input["password"]
+control_socket = initialize_control_connection(hostname, port, username, password)
+print(f"Established Control Connection to {username}@{hostname}")
+
+if command == "mkdir":
+    mkd(parsed_input["path"], control_socket)
+elif command == "rmdir":
+    rmd(parsed_input["path"], control_socket)
+elif command == "ls":
+    ls(parsed_input["path"], control_socket, hostname)
+elif command == "rm":
+    dele(sys.argv[2], parsed_input["path"], control_socket)
+elif command == "cp":
+    copy(sys.argv[2], sys.argv[3], parsed_input["path"], control_socket, hostname)
+elif command == "mv":
+    copy(sys.argv[2], sys.argv[3], parsed_input["path"], control_socket, hostname)
+    dele(sys.argv[2], parsed_input["path"], control_socket)
+else:
+    raise RuntimeError(f"Invalid Command Provided - \"{command}\"")
+
+quit_control_connection(control_socket)
