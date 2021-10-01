@@ -7,11 +7,13 @@ import os
 args = sys.argv
 length = len(args)
 
+#initializing variables
 createFile = False
 sendFile = False
 delete = "none"
 receivels = False
 
+#findign which command was sent
 if length == 3:
     url = args[2]
     urlSearch = url[7:]
@@ -43,49 +45,50 @@ if length == 3:
 elif length == 4:
     if args[1] == "cp":
         if args[2].__contains__("ftps://"):
-            # remote to local
-            command = "RETR"
+            # copying file from remote to local
+            c = "RETR"
             createFile = True
-            # CREATE THE FILE ON OUR LOCAL MACHINE@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+            
             url = args[2]
             urlSearch = url[7:]
             x = urlSearch.find("/")
             path = urlSearch[x:]
-            # now have to get the username and password from the remote FILE aka url
+            
             localFile = args[3]
             command = "RETR " + path + "\r\n"
         else:
-            # local to remote
-            command = "STOR"
+            # copying file from local to remote
+            c = "STOR"
             url = args[3]
             sendFile = True
-            # now have to get the username and password from the remote FILE aka url
+            
             localFile = args[2]
             urlSearch = url[7:]
             x = urlSearch.find("/")
             path = urlSearch[x:]
             command = "STOR " + path + "\r\n"
-    if args[1] == "mv":
+    elif args[1] == "mv":
         if args[2].__contains__("ftps://"):
-            # remote to local
-            command = "RETR"
+            # moving file from remote to local
+            c = "RETR"
             createFile = True
-            # CREATE THE FILE ON OUR LOCAL MACHINE@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ f = open("myfile.txt", "x")
+            
             url = args[2]
-            # now have to get the username and password from the remote FILE aka url
+            
             localFile = args[3]
-            command = "RETR " + url + "\r\n"
-            # DELETE REMOTELY
-            delete = "remote"
             urlSearch = url[7:]
             x = urlSearch.find("/")
             path = urlSearch[x:]
+            command = "RETR " + path + "\r\n"
+            
+            delete = "remote"
+            
             command2 = "DELE " + path + "\r\n"
         else:
-            # local to remote
-            command = "STOR"
+            # moving file from local to remote
+            c = "STOR"
             url = args[3]
-            # now have to get the username and password from the remote FILE aka url
+            
             sendFile = True
             localFile = args[2]
             urlSearch = url[7:]
@@ -93,19 +96,20 @@ elif length == 4:
             path = urlSearch[x:]
             command = "STOR " + path + "\r\n"
             delete = "local"
-            # DELETE LOCALLY@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ os.remove(localFile) but not yet
+            
     else:
         raise ValueError
 else:
     raise ValueError
+# raising errors because the command is not sent correctly
 
-# now get the username and password from the url if possible
-
-# first 7 characters are irrelevant
+# get the username and password from the url if possible
+# getting the host and port from the url
+# first 7 characters of the url are irrelevant
 urlSearch = url[7:]
 x = urlSearch.find("/")
 path = urlSearch[x:]
-print(str(path))
+
 urlSearch = urlSearch[:x]
 y = urlSearch.find("@")
 hostAndPort = urlSearch[y+1:]
@@ -118,7 +122,7 @@ else:
     port = hostAndPort[z+1:]
     host = hostAndPort[:z]
 
-#print("port is: " + port + "and host is: " + host)
+
 w = userAndPass.find(":")
 if w == -1:
     password = "none"
@@ -130,6 +134,25 @@ else:
         raise ValueError
 print("password is: " + password + "username is: " + username)
 
+# function when sending a command
+# given the socket it is sending on and the command
+def send_cmd(sock, cmd):
+    print('>', cmd)
+    
+    sock.sendall(bytes(cmd + '\r\n', 'utf-8'))
+    while True:
+        Message = ""
+        while not '\n' in Message:
+            Message += sock.recv(8192).decode('utf-8')
+        Message1 = Message.split(' ')
+        code = Message1[0]
+        if int(code) // 200 == 1 or int(code) // 300 == 1:
+            break
+        else:
+            raise ValueError
+
+    print('>', Message, end='')
+        
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
     sock.connect((host, int(port)))
     # receiving the welcome message initially
@@ -140,129 +163,31 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         if len(Message) > 0:
             break
 
-    sock.sendall(bytes("AUTH TLS\r\n", 'utf-8'))
-    while True:
-        Message = ""
-        while not '\n' in Message:
-            Message += sock.recv(8192).decode('utf-8')
-        Message1 = Message.split(' ')
-        code = Message1[0]
-        if int(code) // 200 == 1:
-            break
-        else:
-            raise ValueError
+    # sending initial commands if necessary
+    send_cmd(sock, 'AUTH TLS')
+    
     s = ssl.wrap_socket(sock)
 
     if username == "":
-        s.sendall(bytes("USER anonymous\r\n", 'utf-8'))
+        send_cmd(s, "USER anonymous")
     else:
-        s.sendall(bytes("USER " + username + "\r\n", 'utf-8'))
-    while True:
-        Message = ""
-        while not '\n' in Message:
-            Message += s.recv(8192).decode('utf-8')
-        Message1 = Message.split(' ')
-        code = Message1[0]
-        
-        if int(code) // 200 == 1 or int(code) // 300 == 1:
-            break
-        else:
-            raise ValueError
+        send_cmd(s, "USER " + username)
 
+    
     if password != "none":
-        s.sendall(bytes("PASS " + password + "\r\n", 'utf-8'))
-        while True:
-            Message = ""
-            while not '\n' in Message:
-                Message += s.recv(8192).decode('utf-8')
-            Message1 = Message.split(' ')
-            code = Message1[0]
-            print(password + " " + code)
-            if int(code) // 200 == 1:
-                break
-            else:
-                raise ValueError
+        send_cmd(s, "PASS " + password)
 
-    s.sendall(bytes("PBSZ 0\r\n", 'utf-8'))
-    while True:
-        Message = ""
-        while not '\n' in Message:
-            Message += s.recv(8192).decode('utf-8')
-        Message1 = Message.split(' ')
-        code = Message1[0]
-        
-        if int(code) // 200 == 1:
-            break
-        else:
-            raise ValueError
-
-    s.sendall(bytes("PROT P\r\n", 'utf-8'))
-    while True:
-        Message = ""
-        while not '\n' in Message:
-            Message += s.recv(8192).decode('utf-8')
-        Message1 = Message.split(' ')
-        code = Message1[0]
-        
-        if int(code) // 200 == 1:
-            break
-        else:
-            raise ValueError
+    send_cmd(s, "PBSZ 0")
+    send_cmd(s, "PROT P")
 
     if c == "DELE" or c == "MKD" or c == "RMD":
-        print("made it to mkdir, command: " + str(command))
-        s.sendall(bytes(command, 'utf-8'))
-        while True:
-            Message = ""
-            while not '\n' in Message:
-                Message += s.recv(8192).decode('utf-8')
-            Message1 = Message.split(' ')
-            code = Message1[0]
-            print(str(Message1))
-            if int(code) // 200 == 1:
-                break
-            else:
-                raise ValueError
+        send_cmd(s, command)
     else:
-        s.sendall(bytes("TYPE I\r\n", 'utf-8'))
-        while True:
-            Message = ""
-            while not '\n' in Message:
-                Message += s.recv(8192).decode('utf-8')
-            Message1 = Message.split(' ')
-            code = Message1[0]
-            
-            if int(code) // 200 == 1:
-                break
-            else:
-                raise ValueError
+        send_cmd(s, "TYPE I")
+        send_cmd(s, "MODE S")
+        send_cmd(s, "STRU F")
 
-        s.sendall(bytes("MODE S\r\n", 'utf-8'))
-        while True:
-            Message = ""
-            while not '\n' in Message:
-                Message += s.recv(8192).decode('utf-8')
-            Message1 = Message.split(' ')
-            code = Message1[0]
-            
-            if int(code) // 200 == 1:
-                break
-            else:
-                raise ValueError
-
-        s.sendall(bytes("STRU F\r\n", 'utf-8'))
-        while True:
-            Message = ""
-            while not '\n' in Message:
-                Message += s.recv(8192).decode('utf-8')
-            Message1 = Message.split(' ')
-            code = Message1[0]
-            
-            if int(code) // 200 == 1:
-                break
-            else:
-                raise ValueError
-
+        print('> PASV')
         s.sendall(bytes("PASV\r\n", 'utf-8'))
         while True:
             Message = ""
@@ -270,54 +195,43 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                 Message += s.recv(8192).decode('utf-8')
             Message1 = Message.split(' ')
             code = Message1[0]
+
+            print('<', Message, end='')
             
             if int(code) != 227:
                 raise ValueError
             else:
                 ipAndPort = Message1[4]
-                print("IP and port: " + ipAndPort)
-                length = len(ipAndPort)
-                ipAndPort = ipAndPort[1:length-2]
-                nums = ipAndPort.split(',')
-                IP = nums[0] + "." + nums[1] + "." + nums[2] + "." + nums[3]
-                print("port1: " + nums[4] + "port2: " + nums[5])
-                p2 = nums[5]
-                l = len(p2)
-                p2 = p2[:l-2]
-                print("p2: " + p2)
-                port1 = bin(int(nums[4]))
-                port2 = bin(int(p2))
-                print("port1bin: " + str(port1) + "port2bin: " + str(port2))
-                port1 = port1[2:]
-                port2 = port2[2:]
-                port1st = str(port1)
-                port2st = str(port2)
-                print("port1bin: " + str(port1) + "port2bin: " + str(port2))
-                fullPortSTR = port1st + port2st
-                print("portstring: " + fullPortSTR)
-                fullPortINT = int(fullPortSTR, 2)
-                # converted back from binary string to int
+                #print("IP and port: " + ipAndPort)
+                nums = ipAndPort[1:-4].split(',')
+                print(nums)
+                IP = ".".join(nums[0:4])
+                print(IP)
+                #print("port1: " + nums[4] + "port2: " + nums[5])
+                fullPortINT = int(nums[4]) * 256 + int(nums[5])
                 break
 
         print("IP: " + str(IP) + "port: " + str(fullPortINT))
-        s.sendall(bytes(command, 'utf-8'))
-        print(command)
-        print("got here1")
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock2:
-            try:
-                sock2.connect((IP, fullPortINT))
-            except socket.error as  msg:
-                print("Couldnt connect with the socket-server: " + msg + "\n terminating program")
-                sys.exit(1)
 
-            print("got here")
+        print('>', command)
+        s.sendall(bytes(command, 'utf-8'))
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock2:
+            #try:
+            sock2.connect((IP, fullPortINT))
+            #except socket.error as  msg:
+                #print("Couldnt connect with the socket-server: " + msg + "\n terminating program")
+                #sys.exit(1)
+
             while True:
                 Message = ""
                 while not '\n' in Message:
                     Message += s.recv(8192).decode('utf-8')
                 Message1 = Message.split(' ')
                 code = Message1[0]
-                print(str(code))
+
+                print('<', Message, end='')
+                
                 if int(code) // 400 == 1 or int(code) // 500 == 1 or int(code) // 600 == 1:
                     sock2.close()
                     raise ValueError
@@ -329,14 +243,15 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                 with open(localFile, "rb") as f:
                     while True:
                         readSoFar = f.read(4096)
+                        rsf = readSoFar
                         if not readSoFar:
                             break
-                        s2.sendall(bytes(readSoFar, 'utf-8'))
+                        s2.sendall(rsf)
             elif createFile:
                 # receive file and create it
                 with open(localFile, "wb") as f:
                     while True:
-                        readSoFar = s2.recv(4096).decode('utf-8')
+                        readSoFar = s2.recv(4096)
                         if not readSoFar:
                             break
                         f.write(readSoFar)
@@ -352,8 +267,8 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                 # delete the file locally
                 os.remove(localFile)
             elif delete == "remote":
-                s2.sendall(bytes(command2, 'utf-8'))
-                # delete the file remotely
+                s.sendall(bytes(command2, 'utf-8'))
+                print(str(command2))
 
             s2.unwrap().close()
             while True:
