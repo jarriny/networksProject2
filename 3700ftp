@@ -13,7 +13,7 @@ sendFile = False
 delete = "none"
 receivels = False
 
-#findign which command was sent
+#finding which command was sent
 if length == 3:
     url = args[2]
     urlSearch = url[7:]
@@ -122,7 +122,7 @@ else:
     port = hostAndPort[z+1:]
     host = hostAndPort[:z]
 
-
+# finding the username and password
 w = userAndPass.find(":")
 if w == -1:
     password = "none"
@@ -152,7 +152,7 @@ def send_cmd(sock, cmd):
             raise ValueError
 
     print('>', Message, end='')
-        
+# connecting to the socket        
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
     sock.connect((host, int(port)))
     # receiving the welcome message initially
@@ -215,13 +215,11 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
 
         print('>', command)
         s.sendall(bytes(command, 'utf-8'))
-
+        # connecting to the data channel
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock2:
-            #try:
+            
             sock2.connect((IP, fullPortINT))
-            #except socket.error as  msg:
-                #print("Couldnt connect with the socket-server: " + msg + "\n terminating program")
-                #sys.exit(1)
+            
 
             while True:
                 Message = ""
